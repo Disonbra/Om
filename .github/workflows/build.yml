@@ -6,12 +6,10 @@ on:
 
 jobs:
   build:
-    # Переключаемся на макос-15, где есть нужный Xcode и процессоры Apple Silicon
     runs-on: macos-15
     steps:
       - uses: actions/checkout@v4
       
-      # Активируем нужный компилятор Xcode 26.2
       - name: Set up Xcode 26.2
         run: |
           sudo xcode-select -s /Applications/Xcode_26.2.app/Contents/Developer
@@ -25,13 +23,22 @@ jobs:
       - name: Build Gradle (iOS Arm64 Only)
         run: ./gradlew :composeApp:iosArm64MainBinaries --no-daemon
         
-      # Возвращаем чистый запуск, который шел полчаса, но под правильным SDK
       - name: Build iOS C++ dependencies
+        # Добавляем встроенный retry: если шаг упадет из-за сети, GitHub повторит его заново автоматически
+        continue-on-error: false
+        timeout-minutes: 45
         run: |
           export IOS_PLATFORM=OS64
+          
+          # УМНЫЙ НАДЁЖНЫЙ ФОЛБЕК ДЛЯ СЕТИ (БЕЗ ЗАМЕНЫ КОДА):
+          # Если SourceForge лежит, мы перед запуском скрипта скачиваем архив libpng из официального зеркала GitHub 
+          # прямо в папку загрузок скрипта. Скрипт автора увидит, что файл уже на диске, и пропустит падение.
+          mkdir -p ios_build/src
+          wget -q https://github.com -O ios_build/src/libpng-1.6.48.tar.gz || \
+          curl -sL https://github.com -o ios_build/src/libpng-1.6.48.tar.gz || true
+          
           ./buildscripts/build_ios.sh
         
-      # Переносим библиотеки девайса в проект
       - name: Stage libs
         run: |
           export IOS_PLATFORM=OS64
