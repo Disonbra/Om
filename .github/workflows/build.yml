@@ -6,10 +6,12 @@ on:
 
 jobs:
   build:
+    # Переключаемся на макос-15, где есть нужный Xcode и процессоры Apple Silicon
     runs-on: macos-15
     steps:
       - uses: actions/checkout@v4
       
+      # Активируем нужный компилятор Xcode 26.2
       - name: Set up Xcode 26.2
         run: |
           sudo xcode-select -s /Applications/Xcode_26.2.app/Contents/Developer
@@ -23,43 +25,16 @@ jobs:
       - name: Build Gradle (iOS Arm64 Only)
         run: ./gradlew :composeApp:iosArm64MainBinaries --no-daemon
         
-      - name: Build iOS C++ dependencies (Device Only)
+      # Возвращаем чистый запуск, который шел полчаса, но под правильным SDK
+      - name: Build iOS C++ dependencies
         run: |
           export IOS_PLATFORM=OS64
-          
-          # Отключаем симулятор аккуратным обманом функций, чтобы не ломать логику C++
-          sed -i '' 's/skip_if_installed "${name}_sim"/true/g' buildscripts/build_ios.sh
-          sed -i '' 's/skip_if_installed "${name}_device"/skip_if_installed "${name}"/g' buildscripts/build_ios.sh
-          
-          # === ГАРАНТИРОВАННОЕ РЕШЕНИЕ ДЛЯ LUAJIT ===
-          # Создаем обертку для команды cp: если скрипт пытается скопировать файлы в SIMULATORARM64,
-          # система сначала принудительно создаст эту папку, а затем выполнит копирование.
-          # Это сработает во ВСЕХ вложенных скриптах проекта автономно.
-          mkdir -p "$HOME/fake_bin"
-          cat << 'EOF' > "$HOME/fake_bin/cp"
-          #!/usr/bin/env bash
-          for arg in "$@"; do
-            if [[ "$arg" == *"SIMULATORARM64"* ]]; then
-              mkdir -p "$(dirname "$arg")" 2>/dev/null || true
-              mkdir -p "$arg" 2>/dev/null || true
-            fi
-          done
-          /bin/cp "$@"
-          EOF
-          chmod +x "$HOME/fake_bin/cp"
-          export PATH="$HOME/fake_bin:$PATH"
-          
-          # Запускаем сборку зависимостей
           ./buildscripts/build_ios.sh
         
-      - name: Stage libs & Mock Simulator Directory
+      # Переносим библиотеки девайса в проект
+      - name: Stage libs
         run: |
           export IOS_PLATFORM=OS64
-          
-          # Клонируем папки для обмана финального скрипта копирования лаунчера
-          mkdir -p ios_build/ios-libs/SIMULATORARM64
-          cp -R ios_build/ios-libs/OS64/ ios_build/ios-libs/SIMULATORARM64/ 2>/dev/null || true
-          
           ./buildscripts/stage_app_libs.sh device
         
       - name: Inject Custom Encoding and Config
