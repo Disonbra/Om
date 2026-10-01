@@ -26,12 +26,6 @@ jobs:
       - name: Build iOS C++ dependencies
         run: |
           export IOS_PLATFORM=OS64
-          
-          # ЖЕЛЕЗОБЕТОННАЯ ЗАМЕНА ССЫЛКИ: Меняем битый SourceForge на официальное рабочее зеркало GitHub
-          # Это точечный патч, который просто дает компилятору живую ссылку вместо мертвой
-          sed -i '' 's|https://sourceforge.net.*|https://github.com|g' buildscripts/build_ios.sh
-          sed -i '' 's/LIBPNG_VERSION=1.6.48/LIBPNG_VERSION=1.6.44/g' buildscripts/build_ios.sh
-          
           ./buildscripts/build_ios.sh
         
       - name: Stage libs
@@ -70,7 +64,13 @@ jobs:
         run: |
           cd iosApp
           mkdir -p Payload
-          cp -R build_output/Build/Products/Release-iphoneos/iosApp.app Payload/
+          
+          # ДИНАМИЧЕСКИЙ ПОИСК: Находим скомпилированное приложение .app, 
+          # как бы автор его ни назвал, и копируем в Payload
+          APP_PATH=$(find build_output/Build/Products/Release-iphoneos -name "*.app" | head -n 1)
+          echo "Found app bundle at: $APP_PATH"
+          cp -R "$APP_PATH" Payload/
+          
           zip -r OpenMW_iOS_unsigned.ipa Payload
           mv OpenMW_iOS_unsigned.ipa ../..
           
