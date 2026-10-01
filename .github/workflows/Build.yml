@@ -1,0 +1,79 @@
+name: Build Unsigned iOS
+
+on:
+  push:
+    branches: [ "main", "master" ]
+
+jobs:
+  build:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Make scripts executable
+        run: |
+          chmod +x gradlew
+          chmod +x buildscripts/*.sh
+          
+      - name: Build Gradle (iOS Arm64 Only)
+        run: ./gradlew :composeApp:iosArm64MainBinaries --no-daemon
+        
+      - name: Build iOS C++ dependencies
+        run: ./buildscripts/build_ios.sh
+        
+      - name: Stage libs
+        run: ./buildscripts/stage_app_libs.sh device
+        
+      - name: Patch Launcher and Inject Custom Config
+        run: |
+          # Перехватываем генерацию конфига в Swift-коде лаунчера, чтобы добавить Chaos Heart и кодировку
+          # Находим файл, где лаунчер пишет настройки, и добавляем туда ваши строки
+          LAUNCHER_FILE=$(find iosApp -name "Launcher.swift" -o -name "App.swift" -o -name "ContentView.swift" | head -n 1)
+          
+          # Если нашли файл лаунчера, добавим запись ваших модов в манифест, который генерирует приложение
+          # Но проще и надежнее — создать шаблон, который лаунчер прочитает. 
+          # Для этого мы создаем файл конфигурации, который зашьется в ресурсы приложения:
+          mkdir -p iosApp/iosApp
+          cat << 'EOF' > iosApp/iosApp/openmw.cfg
+          fallback-archive=Morrowind.bsa
+          fallback-archive=Tribunal.bsa
+          fallback-archive=Bloodmoon.bsa
+          fallback-archive=ChaosHeart.bsa
+          content=Morrowind.esm
+          content=Tribunal.esm
+          content=Bloodmoon.esm
+          content=ChaosHeart.esm
+          content=ChaosHeartPatch.esp
+          encoding=win1252
+          fallback=Movies_Company_Logo,skipped_on_ios.bik
+          fallback=Movies_Morrowind_Logo,skipped_on_ios.bik
+          EOF
+          echo "Custom openmw.cfg configuration prepared!"
+        
+      - name: Build xcodeApp
+        run: |
+          cd iosApp
+          xcodebuild build \
+            -project iosApp.xcodeproj \
+            -scheme iosApp \
+            -configuration Release \
+            -sdk iphoneos \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            PROVISIONING_PROFILE_SPECIFIER="" \
+            -derivedDataPath build_output
+            
+      - name: Package IPA
+        run: |
+          cd iosApp
+          mkdir -p Payload
+          cp -R build_output/Build/Products/Release-iphoneos/iosApp.app Payload/
+          zip -r OpenMW_iOS_unsigned.ipa Payload
+          mv OpenMW_iOS_unsigned.ipa ../..
+          
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: OpenMW_iOS_unsigned
+          path: OpenMW_iOS_unsigned.ipa
