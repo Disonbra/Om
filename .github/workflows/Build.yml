@@ -1,0 +1,53 @@
+name: Build Unsigned iOS
+
+on:
+  push:
+    branches: [ "main", "master" ]
+
+jobs:
+  build:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Make scripts executable
+        run: |
+          chmod +x gradlew
+          chmod +x buildscripts/*.sh
+          
+      - name: Build Gradle
+        run: ./gradlew :composeApp:assembleRelease
+        
+      - name: Build iOS C++ dependencies
+        run: ./buildscripts/build_ios.sh
+        
+      - name: Stage libs
+        run: ./buildscripts/stage_app_libs.sh device
+        
+      - name: Build xcodeApp
+        run: |
+          cd iosApp
+          xcodebuild build \
+            -project iosApp.xcodeproj \
+            -scheme iosApp \
+            -configuration Release \
+            -sdk iphoneos \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            PROVISIONING_PROFILE_SPECIFIER="" \
+            -derivedDataPath build_output
+            
+      - name: Package IPA
+        run: |
+          cd iosApp
+          mkdir -p Payload
+          cp -R build_output/Build/Products/Release-iphoneos/iosApp.app Payload/
+          zip -r OpenMW_iOS_unsigned.ipa Payload
+          mv OpenMW_iOS_unsigned.ipa ../..
+          
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: OpenMW_iOS_unsigned
+          path: OpenMW_iOS_unsigned.ipa
