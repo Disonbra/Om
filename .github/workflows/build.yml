@@ -24,18 +24,13 @@ jobs:
         run: ./gradlew :composeApp:iosArm64MainBinaries --no-daemon
         
       - name: Build iOS C++ dependencies
-        # Добавляем встроенный retry: если шаг упадет из-за сети, GitHub повторит его заново автоматически
-        continue-on-error: false
-        timeout-minutes: 45
         run: |
           export IOS_PLATFORM=OS64
           
-          # УМНЫЙ НАДЁЖНЫЙ ФОЛБЕК ДЛЯ СЕТИ (БЕЗ ЗАМЕНЫ КОДА):
-          # Если SourceForge лежит, мы перед запуском скрипта скачиваем архив libpng из официального зеркала GitHub 
-          # прямо в папку загрузок скрипта. Скрипт автора увидит, что файл уже на диске, и пропустит падение.
-          mkdir -p ios_build/src
-          wget -q https://github.com -O ios_build/src/libpng-1.6.48.tar.gz || \
-          curl -sL https://github.com -o ios_build/src/libpng-1.6.48.tar.gz || true
+          # ЖЕЛЕЗОБЕТОННАЯ ЗАМЕНА ССЫЛКИ: Меняем битый SourceForge на официальное рабочее зеркало GitHub
+          # Это точечный патч, который просто дает компилятору живую ссылку вместо мертвой
+          sed -i '' 's|https://sourceforge.net.*|https://github.com|g' buildscripts/build_ios.sh
+          sed -i '' 's/LIBPNG_VERSION=1.6.48/LIBPNG_VERSION=1.6.44/g' buildscripts/build_ios.sh
           
           ./buildscripts/build_ios.sh
         
