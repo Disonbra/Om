@@ -31,14 +31,25 @@ jobs:
           sed -i '' 's/skip_if_installed "${name}_sim"/true/g' buildscripts/build_ios.sh
           sed -i '' 's/skip_if_installed "${name}_device"/skip_if_installed "${name}"/g' buildscripts/build_ios.sh
           
-          # ИСПРАВЛЕНИЕ ДЛЯ LUAJIT: Внедряем создание папки симулятора прямо в скрипт сборки LuaJIT 
-          # перед строкой с копированием заголовков (Copying Luajit headers), чтобы обойти очистку папок
-          LUAJIT_SCRIPT=$(find buildscripts -name "*luajit*" -o -name "build_ios.sh" | head -n 1)
-          sed -i '' '/=== Copying Luajit headers ===/i\
-          mkdir -p "$(pwd)/ios_build/ios-libs/SIMULATORARM64/include"\
-          ' "$LUAJIT_SCRIPT" 2>/dev/null || true
+          # === ГАРАНТИРОВАННОЕ РЕШЕНИЕ ДЛЯ LUAJIT ===
+          # Создаем обертку для команды cp: если скрипт пытается скопировать файлы в SIMULATORARM64,
+          # система сначала принудительно создаст эту папку, а затем выполнит копирование.
+          # Это сработает во ВСЕХ вложенных скриптах проекта автономно.
+          mkdir -p "$HOME/fake_bin"
+          cat << 'EOF' > "$HOME/fake_bin/cp"
+          #!/usr/bin/env bash
+          for arg in "$@"; do
+            if [[ "$arg" == *"SIMULATORARM64"* ]]; then
+              mkdir -p "$(dirname "$arg")" 2>/dev/null || true
+              mkdir -p "$arg" 2>/dev/null || true
+            fi
+          done
+          /bin/cp "$@"
+          EOF
+          chmod +x "$HOME/fake_bin/cp"
+          export PATH="$HOME/fake_bin:$PATH"
           
-          # Запускаем сборку
+          # Запускаем сборку зависимостей
           ./buildscripts/build_ios.sh
         
       - name: Stage libs & Mock Simulator Directory
