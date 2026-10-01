@@ -1,81 +1,280 @@
-name: Build Unsigned iOS
+name: Build Unsigned OpenMW iOS
 
 on:
+  workflow_dispatch:
+
   push:
-    branches: [ "main", "master" ]
+    branches:
+      - main
+      - master
+
+permissions:
+  contents: read
+
+concurrency:
+  group: openmw-ios-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  IPHONEOS_DEPLOYMENT_TARGET: "26.2"
+  DEPLOYMENT_TARGET: "26.2"
+  IOS_PLATFORM: "OS64"
 
 jobs:
   build:
-    runs-on: macos-15
+    name: Build OpenMW iOS IPA
+    runs-on: macos-26
+
     steps:
-      - uses: actions/checkout@v4
-      
-      - name: Set up Xcode 26.2
+      # ---------------------------------------------------------
+      # Checkout
+      # ---------------------------------------------------------
+
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+          submodules: recursive
+
+      # ---------------------------------------------------------
+      # Xcode
+      # ---------------------------------------------------------
+
+      - name: Select Xcode 26.2
+        shell: bash
         run: |
-          sudo xcode-select -s /Applications/Xcode_26.2.app/Contents/Developer
+          set -Eeuo pipefail
+
+          XCODE_PATH=""
+
+          for candidate in \
+            "/Applications/Xcode_26.2.app" \
+            "/Applications/Xcode_26.2.0.app" \
+            "/Applications/Xcode_26.2.1.app"
+          do
+            if [[ -d "${candidate}" ]]; then
+              XCODE_PATH="${candidate}"
+              break
+            fi
+          done
+
+          if [[ -z "${XCODE_PATH}" ]]; then
+            echo "ERROR: Xcode 26.2 was not found."
+
+            echo
+            echo "Installed Xcode versions:"
+            find /Applications \
+              -maxdepth 1 \
+              -type d \
+              -name "Xcode*.app" \
+              -print | sort
+
+            exit 1
+          fi
+
+          sudo xcode-select -s "${XCODE_PATH}/Contents/Developer"
+
+          sudo xcodebuild -license accept || true
+          sudo xcodebuild -runFirstLaunch || true
+
+          echo "Developer directory:"
+          xcode-select -p
+
+          echo
+          echo "Xcode:"
           xcodebuild -version
-          
-      - name: Make scripts executable
+
+          echo
+          echo "iPhoneOS SDK:"
+          xcrun --sdk iphoneos --show-sdk-path
+          xcrun --sdk iphoneos --show-sdk-version
+
+          echo
+          echo "Simulator SDK:"
+          xcrun --sdk iphonesimulator --show-sdk-path
+          xcrun --sdk iphonesimulator --show-sdk-version
+
+      # ---------------------------------------------------------
+      # Repository preparation
+      # ---------------------------------------------------------
+
+      - name: Prepare repository
+        shell: bash
         run: |
-          chmod +x gradlew
-          chmod +x buildscripts/*.sh
-          
-      - name: Build Gradle (iOS Arm64 Only)
-        run: ./gradlew :composeApp:iosArm64MainBinaries --no-daemon
-        
-      - name: Build iOS C++ dependencies
+          set -Eeuo pipefail
+
+          chmod +x ./gradlew
+          chmod +x ./buildscripts/*.sh
+
+          required_files=(
+            "./gradlew"
+            "./buildscripts/build_ios.sh"
+            "./buildscripts/stage_app_libs.sh"
+            "./buildscripts/patch_shaders.sh"
+            "./buildscripts/package_ipa.sh"
+          )
+
+          for file in "${required_files[@]}"; do
+            if [[ ! -f "${file}" ]]; then
+              echo "ERROR: required file not found: ${file}"
+              exit 1
+            fi
+
+            echo "Found: ${file}"
+          done
+
+          if [[ ! -d "./iosApp" ]]; then
+            echo "ERROR: iosApp directory not found"
+            exit 1
+          fi
+
+          XCODE_PROJECT="$(
+            find ./iosApp \
+              -type d \
+              -name "*.xcodeproj" \
+              -print -quit
+          )"
+
+          if [[ -z "${XCODE_PROJECT}" ]]; then
+            echo "ERROR: Xcode project not found under iosApp/"
+            find ./iosApp -maxdepth 6 -print || true
+            exit 1
+          fi
+
+          echo "XCODE_PROJECT=${GITHUB_WORKSPACE}/${XCODE_PROJECT#./}" \
+            >> "${GITHUB_ENV}"
+
+          echo "Using Xcode project:"
+          echo "${XCODE_PROJECT}"
+
+      # ---------------------------------------------------------
+      # Gradle / Kotlin iOS
+      # ---------------------------------------------------------
+
+      - name: Build Kotlin iOS Arm64 binaries
+        shell: bash
         run: |
-          export IOS_PLATFORM=OS64
-          ./buildscripts/build_ios.sh
-        
-      - name: Stage libs
+          set -Eeuo pipefail
+
+          # composeApp configures AGP even for an iOS task.
+          # These conflicting Android preference variables must not exist.
+          unset ANDROID_PREFS_ROOT || true
+          unset ANDROID_USER_HOME || true
+          unset ANDROID_SDK_HOME || true
+          unset ANDROID_HOME || true
+
+          ./gradlew \
+            :composeApp:iosArm64MainBinaries \
+            --no-daemon \
+            --no-configuration-cache \
+            --stacktrace
+
+      # ---------------------------------------------------------
+      # OpenMW native dependencies
+      # ---------------------------------------------------------
+
+      - name: Build OpenMW native libraries
+        shell: bash
+        env:
+          IOS_PLATFORM: OS64
+          DEPLOYMENT_TARGET: "26.2"
+          IPHONEOS_DEPLOYMENT_TARGET: "26.2"
         run: |
-          export IOS_PLATFORM=OS64
-          ./buildscripts/stage_app_libs.sh device
-        
-      - name: Inject Custom Encoding and Config
+          set -Eeuo pipefail
+
+          bash ./buildscripts/build_ios.sh
+
+      - name: Inspect native output
+        shell: bash
         run: |
-          mkdir -p iosApp/iosApp
-          cat << 'EOF' > iosApp/iosApp/openmw.cfg
-          fallback-archive=Morrowind.bsa
-          fallback-archive=Tribunal.bsa
-          fallback-archive=Bloodmoon.bsa
-          encoding=win1251
-          fallback=Movies_Company_Logo,skipped_on_ios.bik
-          fallback=Movies_Morrowind_Logo,skipped_on_ios.bik
-          EOF
-          echo "Base configuration with win1251 successfully injected!"
-        
-      - name: Build Xcode App
+          set -Eeuo pipefail
+
+          if [[ ! -d "${GITHUB_WORKSPACE}/ios_build" ]]; then
+            echo "ERROR: ios_build directory was not created"
+            exit 1
+          fi
+
+          echo "Frameworks:"
+          find "${GITHUB_WORKSPACE}/ios_build" \
+            -type d \
+            -name "*.framework" \
+            -print | sort || true
+
+          echo
+          echo "Static libraries:"
+          find "${GITHUB_WORKSPACE}/ios_build" \
+            -type f \
+            -name "*.a" \
+            -print | sort | head -300 || true
+
+          echo
+          echo "Dynamic libraries:"
+          find "${GITHUB_WORKSPACE}/ios_build" \
+            -type f \
+            -name "*.dylib" \
+            -print | sort | head -300 || true
+
+      # ---------------------------------------------------------
+      # Device IPA
+      # ---------------------------------------------------------
+
+      - name: Build and package device IPA
+        shell: bash
+        env:
+          IOS_PLATFORM: OS64
+          DEPLOYMENT_TARGET: "26.2"
+          IPHONEOS_DEPLOYMENT_TARGET: "26.2"
         run: |
-          cd iosApp
-          xcodebuild build \
-            -project iosApp.xcodeproj \
-            -scheme iosApp \
-            -configuration Release \
-            -sdk iphoneos \
-            CODE_SIGNING_ALLOWED=NO \
-            CODE_SIGNING_REQUIRED=NO \
-            CODE_SIGN_IDENTITY="" \
-            PROVISIONING_PROFILE_SPECIFIER="" \
-            -derivedDataPath build_output
-            
-      - name: Package IPA
+          set -Eeuo pipefail
+
+          bash ./buildscripts/package_ipa.sh device
+
+      - name: Verify device IPA
+        shell: bash
         run: |
-          cd iosApp
-          mkdir -p Payload
-          
-          # ДИНАМИЧЕСКИЙ ПОИСК: Находим скомпилированное приложение .app, 
-          # как бы автор его ни назвал, и копируем в Payload
-          APP_PATH=$(find build_output/Build/Products/Release-iphoneos -name "*.app" | head -n 1)
-          echo "Found app bundle at: $APP_PATH"
-          cp -R "$APP_PATH" Payload/
-          
-          zip -r OpenMW_iOS_unsigned.ipa Payload
-          mv OpenMW_iOS_unsigned.ipa ../..
-          
-      - name: Upload Artifact
+          set -Eeuo pipefail
+
+          IPA="${GITHUB_WORKSPACE}/OpenMW.ipa"
+
+          if [[ ! -f "${IPA}" ]]; then
+            echo "ERROR: IPA was not created:"
+            echo "${IPA}"
+            exit 1
+          fi
+
+          echo "IPA created:"
+          ls -lh "${IPA}"
+
+          echo
+          echo "IPA contents:"
+          unzip -l "${IPA}"
+
+          if ! unzip -l "${IPA}" | grep -q "Payload/.*\.app/"; then
+            echo "ERROR: IPA does not contain Payload/*.app"
+            exit 1
+          fi
+
+      - name: Upload unsigned IPA
         uses: actions/upload-artifact@v4
         with:
           name: OpenMW_iOS_unsigned
-          path: OpenMW_iOS_unsigned.ipa
+          path: OpenMW.ipa
+          if-no-files-found: error
+          retention-days: 7
+
+      # ---------------------------------------------------------
+      # Logs and diagnostics
+      # ---------------------------------------------------------
+
+      - name: Upload build logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: OpenMW_iOS_logs
+          path: |
+            ios_build/**/*.log
+            ios_build/**/*.txt
+            ios_build/**/CMakeCache.txt
+            ios_build/**/config.log
+          if-no-files-found: ignore
+          retention-days: 7
