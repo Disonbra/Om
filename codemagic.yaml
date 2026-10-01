@@ -1,0 +1,79 @@
+workflows:
+  openmw-ios:
+    name: OpenMW iOS unsigned IPA
+
+    instance_type: mac_mini_m2
+
+    max_build_duration: 120
+
+    environment:
+      xcode: 26.2
+      cocoapods: default
+      vars:
+        IPHONEOS_DEPLOYMENT_TARGET: "26.2"
+        DEPLOYMENT_TARGET: "26.2"
+        IOS_PLATFORM: "OS64"
+
+    cache:
+      cache_paths:
+        - $HOME/.gradle/caches
+        - $HOME/.gradle/wrapper
+        - $HOME/Library/Caches
+        - ios_build/src
+        - ios_build/ios-cmake
+        - ios_build/ios-libs
+
+    scripts:
+      - name: Prepare scripts
+        script: |
+          set -Eeuo pipefail
+
+          chmod +x gradlew
+          chmod +x buildscripts/*.sh
+
+          test -f buildscripts/build_ios.sh
+          test -f buildscripts/stage_app_libs.sh
+          test -f buildscripts/patch_shaders.sh
+          test -f buildscripts/package_ipa.sh
+          test -f iosApp/iosApp.xcodeproj/project.pbxproj
+
+      - name: Build Kotlin iOS Arm64 binaries
+        script: |
+          set -Eeuo pipefail
+
+          unset ANDROID_PREFS_ROOT || true
+          unset ANDROID_USER_HOME || true
+          unset ANDROID_SDK_HOME || true
+          unset ANDROID_HOME || true
+
+          ./gradlew \
+            :composeApp:iosArm64MainBinaries \
+            --no-daemon \
+            --no-configuration-cache \
+            --stacktrace
+
+      - name: Build OpenMW native libraries
+        script: |
+          set -Eeuo pipefail
+
+          export IPHONEOS_DEPLOYMENT_TARGET="26.2"
+          export DEPLOYMENT_TARGET="26.2"
+          export IOS_PLATFORM="OS64"
+
+          bash buildscripts/build_ios.sh
+
+      - name: Build unsigned device IPA
+        script: |
+          set -Eeuo pipefail
+
+          export IPHONEOS_DEPLOYMENT_TARGET="26.2"
+          export DEPLOYMENT_TARGET="26.2"
+
+          bash buildscripts/package_ipa.sh device
+
+    artifacts:
+      - OpenMW.ipa
+      - ios_build/**/*.log
+      - ios_build/**/*.txt
+      - ios_build/**/CMakeCache.txt
+      - ios_build/**/config.log
