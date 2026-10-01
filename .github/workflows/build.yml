@@ -1,0 +1,77 @@
+name: Build Unsigned iOS
+
+on:
+  push:
+    branches: [ "main", "master" ]
+
+jobs:
+  build:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Make scripts executable
+        run: |
+          chmod +x gradlew
+          chmod +x buildscripts/*.sh
+          
+      - name: Build Gradle (iOS Only)
+        run: ./gradlew :composeApp:iosX64MainBinaries :composeApp:iosArm64MainBinaries --no-daemon
+        
+      - name: Build iOS C++ dependencies
+        run: ./buildscripts/build_ios.sh
+        
+      - name: Stage libs
+        run: ./buildscripts/stage_app_libs.sh device
+        
+      - name: Inject custom openmw.cfg
+        run: |
+          mkdir -p iosApp/iosApp
+          cat << 'EOF' > iosApp/iosApp/openmw.cfg
+          # === ВАШИ НАСТРОЙКИ OPENMW.CFG НАЧИНАЮТСЯ ТУТ ===
+          data="/var/mobile/Containers/Data/Application/DBE7CD5F-7069-4E5C-8E1F-CBE281059D1B/Library/Application Support/Alpha3/resources"
+          data="/var/mobile/Containers/Data/Application/DBE7CD5F-7069-4E5C-8E1F-CBE281059D1B/Documents/Data Files"
+          fallback-archive=Morrowind.bsa
+          fallback-archive=Tribunal.bsa
+          fallback-archive=Bloodmoon.bsa
+          fallback-archive=ChaosHeart.bsa
+          content=Morrowind.esm
+          content=Tribunal.esm
+          content=Bloodmoon.esm
+          content=ChaosHeart.esm
+          content=ChaosHeartPatch.esp
+          encoding=win1252
+          fallback=Movies_Company_Logo,skipped_on_ios.bik
+          fallback=Movies_Morrowind_Logo,skipped_on_ios.bik
+
+          # === КОНЕЦ НАСТРОЕК ===
+          EOF
+          echo "Custom openmw.cfg injected successfully!"
+        
+      - name: Build xcodeApp
+        run: |
+          cd iosApp
+          xcodebuild build \
+            -project iosApp.xcodeproj \
+            -scheme iosApp \
+            -configuration Release \
+            -sdk iphoneos \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            PROVISIONING_PROFILE_SPECIFIER="" \
+            -derivedDataPath build_output
+            
+      - name: Package IPA
+        run: |
+          cd iosApp
+          mkdir -p Payload
+          cp -R build_output/Build/Products/Release-iphoneos/iosApp.app Payload/
+          zip -r OpenMW_iOS_unsigned.ipa Payload
+          mv OpenMW_iOS_unsigned.ipa ../..
+          
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: OpenMW_iOS_unsigned
+          path: OpenMW_iOS_unsigned.ipa
