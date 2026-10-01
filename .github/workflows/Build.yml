@@ -1,0 +1,71 @@
+name: Build Unsigned iOS
+
+on:
+  push:
+    branches: [ "main", "master" ]
+
+jobs:
+  build:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Make scripts executable
+        run: |
+          chmod +x gradlew
+          chmod +x buildscripts/*.sh
+          
+      - name: Build Gradle (iOS Arm64 Only)
+        run: ./gradlew :composeApp:iosArm64MainBinaries --no-daemon
+        
+      - name: Build iOS C++ dependencies (Device Only)
+        run: |
+          export IOS_PLATFORM=OS64
+          ./buildscripts/build_ios.sh device
+        
+      - name: Stage libs
+        run: |
+          export IOS_PLATFORM=OS64
+          ./buildscripts/stage_app_libs.sh device
+        
+      - name: Inject Custom Encoding and Config
+        run: |
+          # Создаем чистый базовый шаблон конфигурации с русской кодировкой
+          mkdir -p iosApp/iosApp
+          cat << 'EOF' > iosApp/iosApp/openmw.cfg
+          fallback-archive=Morrowind.bsa
+          fallback-archive=Tribunal.bsa
+          fallback-archive=Bloodmoon.bsa
+          encoding=win1251
+          fallback=Movies_Company_Logo,skipped_on_ios.bik
+          fallback=Movies_Morrowind_Logo,skipped_on_ios.bik
+          EOF
+          echo "Base configuration with win1251 successfully injected!"
+        
+      - name: Build xcodeApp
+        run: |
+          cd iosApp
+          xcodebuild build \
+            -project iosApp.xcodeproj \
+            -scheme iosApp \
+            -configuration Release \
+            -sdk iphoneos \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            PROVISIONING_PROFILE_SPECIFIER="" \
+            -derivedDataPath build_output
+            
+      - name: Package IPA
+        run: |
+          cd iosApp
+          mkdir -p Payload
+          cp -R build_output/Build/Products/Release-iphoneos/iosApp.app Payload/
+          zip -r OpenMW_iOS_unsigned.ipa Payload
+          mv OpenMW_iOS_unsigned.ipa ../..
+          
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: OpenMW_iOS_unsigned
+          path: OpenMW_iOS_unsigned.ipa
