@@ -6,21 +6,24 @@ on:
 
 jobs:
   build:
-    # Переключаемся на актуальный macos-15 (он работает на Apple Silicon M-серии)
     runs-on: macos-15
     steps:
       - uses: actions/checkout@v4
       
-      # Жестко активируем Xcode 26.2 и SDK 26.2, которые зашиты в систему
       - name: Set up Xcode 26.2
         run: |
           sudo xcode-select -s /Applications/Xcode_26.2.app/Contents/Developer
           xcodebuild -version
           
-      - name: Make scripts executable
+      - name: Make scripts executable & Create Pre-build Directories
         run: |
           chmod +x gradlew
           chmod +x buildscripts/*.sh
+          
+          # Жестко создаем папки симулятора до старта любых скриптов, 
+          # чтобы Luajit не падал на копировании инклюдов
+          mkdir -p ios_build/ios-libs/SIMULATORARM64/include
+          mkdir -p ios_build/ios-libs/SIMULATORARM64/lib
           
       - name: Build Gradle (iOS Arm64 Only)
         run: ./gradlew :composeApp:iosArm64MainBinaries --no-daemon
@@ -39,8 +42,7 @@ jobs:
         run: |
           export IOS_PLATFORM=OS64
           
-          # Создаем клон для беспрепятственного прохождения скрипта stage_app_libs.sh
-          mkdir -p ios_build/ios-libs/SIMULATORARM64
+          # Клонируем папки для обмана финального скрипта копирования лаунчера
           cp -R ios_build/ios-libs/OS64/ ios_build/ios-libs/SIMULATORARM64/ 2>/dev/null || true
           
           ./buildscripts/stage_app_libs.sh device
