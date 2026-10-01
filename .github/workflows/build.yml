@@ -20,26 +20,27 @@ jobs:
         
       - name: Build iOS C++ dependencies (Device Only)
         run: |
-          # 1. Задаем глобальную платформу для подстраховки
           export IOS_PLATFORM=OS64
           
-          # 2. Обманываем функцию проверки: заставляем её всегда думать, 
-          # что симуляторные библиотеки уже установлены.
-          # Заменяем внутри функции skip_if_installed проверку для симулятора на мгновенный возврат true.
+          # Обманываем сборщик симулятора на этапе компиляции C++
           sed -i '' 's/skip_if_installed "${name}_sim"/true/g' buildscripts/build_ios.sh
           sed -i '' 's/skip_if_installed "${name}_device"/skip_if_installed "${name}"/g' buildscripts/build_ios.sh
           
-          # 3. Запускаем скрипт сборки
           ./buildscripts/build_ios.sh
         
-      - name: Stage libs
+      - name: Stage libs & Fake Simulator Data
         run: |
           export IOS_PLATFORM=OS64
+          
+          # СОЗДАЕМ ПОЛНУЮ КОПИЮ ДЛЯ СИМУЛЯТОРА ИЗ ГОТОВЫХ ДЕВАЙС-БИБЛИОТЕК
+          # Это гарантирует, что любые команды cp, find или линковки внутри скриптов автора не упадут
+          mkdir -p ios_build/ios-libs/SIMULATORARM64
+          cp -R ios_build/ios-libs/OS64/ ios_build/ios-libs/SIMULATORARM64/
+          
           ./buildscripts/stage_app_libs.sh device
         
       - name: Inject Custom Encoding and Config
         run: |
-          # Создаем чистый базовый шаблон конфигурации с русской кодировкой
           mkdir -p iosApp/iosApp
           cat << 'EOF' > iosApp/iosApp/openmw.cfg
           fallback-archive=Morrowind.bsa
