@@ -348,7 +348,6 @@ else
                 --disable-samples \
                 --disable-icuio \
                 --disable-extras \
-                --disable-tools
 
             make -j"${BUILD_JOBS}"
             make install
@@ -370,7 +369,6 @@ else
         --disable-samples \
         --disable-icuio \
         --disable-extras \
-        --disable-tools \
         --with-cross-build="${ICU_HOST_BUILD_DIR}"
 fi
 # ------------------- Luajit -------------------
