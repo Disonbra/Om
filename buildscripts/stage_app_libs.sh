@@ -16,11 +16,10 @@ OPENMW_SRC=$(ls -d "${WORK_DIR}/src/"openmw-* 2>/dev/null | head -1)
 
 DYLIBS=(
     libSDL2-2.0.0.dylib
-    libopenal.1.dylib
-    libcollada-dom2.5-dp.0.dylib
-    libbz2.1.dylib
-    libjpeg.62.dylib
-    libz.1.dylib
+    libopenal.1.24.3.dylib
+    libcollada-dom2.5-dp.2.5.0.dylib
+    libjpeg.62.4.0.dylib
+    libz.1.3.2.dylib
 )
 
 RESOURCES=(
