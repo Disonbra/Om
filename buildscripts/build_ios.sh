@@ -397,11 +397,17 @@ if skip_if_installed "luajit"; then true; else
 fi
 
 # ------------------- Zlib -------------------
-if skip_if_installed "zlib"; then true; else
+if skip_if_installed "zlib"; then
+    true
+else
     cd "${SRC_DIR}"
+
     if [ ! -d "zlib-${ZLIB_VERSION}" ]; then
         echo "=== Downloading and building zlib ==="
-        wget -c https://zlib.net/zlib-${ZLIB_VERSION}.tar.gz -O - | tar -xz
+
+        wget -c \
+          "https://github.com/madler/zlib/releases/download/v${ZLIB_VERSION}/zlib-${ZLIB_VERSION}.tar.gz" \
+          -O - | tar -xz
     fi
 
     build_dual_platform "zlib" "${SRC_DIR}/zlib-${ZLIB_VERSION}"
