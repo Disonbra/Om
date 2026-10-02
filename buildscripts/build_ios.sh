@@ -4,7 +4,7 @@
 
 set -e  # Exit on error
 
-# ------------------- Logging Setup -------------------
+# ------------------- Logging Setup ------------------
 LOG_FILE="$(pwd)/ios_build/build.log"
 mkdir -p "$(dirname "${LOG_FILE}")"
 echo "=== Build started at $(date) ===" > "${LOG_FILE}"
