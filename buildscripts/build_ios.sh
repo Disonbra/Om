@@ -369,6 +369,7 @@ else
         --disable-samples \
         --disable-icuio \
         --disable-extras \
+        --disable-tools \
         --with-cross-build="${ICU_HOST_BUILD_DIR}"
 fi
 # ------------------- Luajit -------------------
