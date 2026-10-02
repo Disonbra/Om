@@ -14,7 +14,7 @@ WORK_DIR="${REPO_DIR}/ios_build"
 OPENMW_SRC="$(find "${WORK_DIR}/src" -maxdepth 1 -type d -name 'openmw-*' -print -quit)"
 
 if [[ -z "${OPENMW_SRC}" || ! -d "${OPENMW_SRC}" ]]; then
-    echo "ERROR: OpenMW source directory was not found under ${WORK_DIR}/src" >&2
+    echo "ERROR : OpenMW source directory was not found under ${WORK_DIR}/src" >&2
     exit 1
 fi
 
