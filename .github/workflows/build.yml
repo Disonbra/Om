@@ -221,6 +221,29 @@ jobs:
 
           bash ./buildscripts/build_ios.sh
 
+      - name: Upload native libraries
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: OpenMW_iOS_native_libraries
+          path: |
+            ios_build/ios-libs/OS64
+            ios_build/ios-libs/SIMULATORARM64
+          if-no-files-found: error
+          retention-days: 90
+          compression-level: 0
+
+      - name: Upload OpenMW native build
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: OpenMW_iOS_engine_build
+          path: |
+            ios_build/src/openmw-*/build_openmw_*
+          if-no-files-found: warn
+          retention-days: 90
+          compression-level: 0
+          
       - name: Inspect native outputs
         shell: bash
         run: |
