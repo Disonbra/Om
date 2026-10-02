@@ -272,7 +272,7 @@ build_platform_lib() {
     cd ..
 }
 
-# ------------------- ICU (host + device + simulator) -------------------
+# ------------------- ICU (host tools + iOS device/simulator) -------------------
 
 if skip_if_installed "icu"; then
     true
@@ -291,34 +291,31 @@ else
             -O - | tar -xz
     fi
 
-    if [[ ! -f "${ICU_HOST_PREFIX}/lib/libicuuc.a" ]] &&
-       [[ ! -f "${ICU_HOST_PREFIX}/lib/libicuuc.dylib" ]]; then
+    # --------------------------------------------------------
+    # 1. Host ICU tools.
+    # These tools run on the Apple Silicon build machine.
+    # --------------------------------------------------------
 
-        echo "=== Building ICU for macOS host ==="
+    if [[ ! -f "${ICU_HOST_PREFIX}/bin/icupkg" ]] ||
+       [[ ! -f "${ICU_HOST_PREFIX}/lib/libicuuc.a" ]]; then
+
+        echo "=== Building ICU host tools ==="
 
         rm -rf "${ICU_HOST_BUILD_DIR}"
         mkdir -p "${ICU_HOST_BUILD_DIR}"
 
-        HOST_ARCH="$(uname -m)"
         HOST_SDK_PATH="$(xcrun --sdk macosx --show-sdk-path)"
-
-        case "${HOST_ARCH}" in
-            arm64)
-                HOST_TRIPLET="aarch64-apple-darwin"
-                ;;
-            x86_64)
-                HOST_TRIPLET="x86_64-apple-darwin"
-                ;;
-            *)
-                echo "ERROR: unsupported host architecture: ${HOST_ARCH}" >&2
-                exit 1
-                ;;
-        esac
+        HOST_ARCH="$(uname -m)"
 
         (
             cd "${ICU_HOST_BUILD_DIR}"
 
             unset SDKROOT
+            unset SDK_NAME
+            unset PLATFORM_NAME
+            unset PLATFORM
+            unset EFFECTIVE_PLATFORM_NAME
+            unset IPHONEOS_DEPLOYMENT_TARGET
             unset CFLAGS
             unset CPPFLAGS
             unset CXXFLAGS
@@ -328,6 +325,7 @@ else
             unset AR
             unset RANLIB
             unset STRIP
+            unset CONFIG_SITE
             unset MACOSX_DEPLOYMENT_TARGET
 
             export SDKROOT="${HOST_SDK_PATH}"
@@ -344,29 +342,7 @@ else
             export CXXFLAGS="-arch ${HOST_ARCH} -isysroot ${HOST_SDK_PATH}"
             export LDFLAGS="-arch ${HOST_ARCH} -isysroot ${HOST_SDK_PATH}"
 
-            cat > host_test.c <<'EOF'
-#include <stdio.h>
-
-int main(void)
-{
-    puts("ICU host compiler test passed");
-    return 0;
-}
-EOF
-
-            "${CC}" \
-                ${CFLAGS} \
-                host_test.c \
-                ${LDFLAGS} \
-                -o host_test
-
-            ./host_test
-
-            rm -f host_test.c host_test
-
             "${ICU_SOURCE_DIR}/icu4c/source/configure" \
-                --build="${HOST_TRIPLET}" \
-                --host="${HOST_TRIPLET}" \
                 --prefix="${ICU_HOST_PREFIX}" \
                 --disable-tests \
                 --disable-samples \
@@ -378,8 +354,14 @@ EOF
             make install
         )
     else
-        echo "=== ICU host already installed; skipping host build ==="
+        echo "=== ICU host tools already built ==="
     fi
+
+    # --------------------------------------------------------
+    # 2. Target ICU libraries for iOS device and simulator.
+    # --------------------------------------------------------
+
+    echo "=== Building ICU for iOS device and simulator ==="
 
     build_configure_dual_platform \
         "icu" \
@@ -391,7 +373,6 @@ EOF
         --disable-tools \
         --with-cross-build="${ICU_HOST_BUILD_DIR}"
 fi
-
 # ------------------- Luajit -------------------
 if skip_if_installed "luajit"; then true; else
     cd "${SRC_DIR}"
