@@ -1,4 +1,4 @@
-name: Build iOS IPA
+name: Build iOS
 
 on:
   workflow_dispatch:
@@ -7,23 +7,9 @@ jobs:
   build-ios:
     runs-on: macos-26
 
-    env:
-      IPHONEOS_DEPLOYMENT_TARGET: "26.2"
-      DEPLOYMENT_TARGET: "26.2"
-
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-
-      - name: Select Xcode 26.2
-        shell: bash
-        run: |
-          set -Eeuo pipefail
-
-          sudo xcode-select -s /Applications/Xcode_26.2.app
-          xcodebuild -version
-          xcrun --sdk iphoneos --show-sdk-version
-          xcrun --sdk iphonesimulator --show-sdk-version
 
       - name: Build dependency stack
         shell: bash
@@ -31,7 +17,7 @@ jobs:
           set -Eeuo pipefail
           bash ./buildscripts/build_ios.sh
 
-      - name: Build and package IPA
+      - name: Package device IPA
         shell: bash
         run: |
           set -Eeuo pipefail
