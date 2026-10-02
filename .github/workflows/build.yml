@@ -26,19 +26,11 @@ jobs:
     runs-on: macos-26
 
     steps:
-      # ---------------------------------------------------------
-      # Checkout
-      # ---------------------------------------------------------
-
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
           fetch-depth: 1
           submodules: recursive
-
-      # ---------------------------------------------------------
-      # Xcode
-      # ---------------------------------------------------------
 
       - name: Select Xcode 26.2
         shell: bash
@@ -50,7 +42,8 @@ jobs:
           for candidate in \
             "/Applications/Xcode_26.2.app" \
             "/Applications/Xcode_26.2.0.app" \
-            "/Applications/Xcode_26.2.1.app"
+            "/Applications/Xcode_26.2.1.app" \
+            "/Applications/Xcode.app"
           do
             if [[ -d "${candidate}" ]]; then
               XCODE_PATH="${candidate}"
@@ -59,10 +52,8 @@ jobs:
           done
 
           if [[ -z "${XCODE_PATH}" ]]; then
-            echo "ERROR: Xcode 26.2 was not found."
+            echo "ERROR: Xcode was not found"
 
-            echo
-            echo "Installed Xcode versions:"
             find /Applications \
               -maxdepth 1 \
               -type d \
@@ -73,30 +64,13 @@ jobs:
           fi
 
           sudo xcode-select -s "${XCODE_PATH}/Contents/Developer"
-
           sudo xcodebuild -license accept || true
           sudo xcodebuild -runFirstLaunch || true
 
-          echo "Developer directory:"
           xcode-select -p
-
-          echo
-          echo "Xcode:"
           xcodebuild -version
-
-          echo
-          echo "iPhoneOS SDK:"
           xcrun --sdk iphoneos --show-sdk-path
           xcrun --sdk iphoneos --show-sdk-version
-
-          echo
-          echo "Simulator SDK:"
-          xcrun --sdk iphonesimulator --show-sdk-path
-          xcrun --sdk iphonesimulator --show-sdk-version
-
-      # ---------------------------------------------------------
-      # Repository preparation
-      # ---------------------------------------------------------
 
       - name: Prepare repository
         shell: bash
@@ -106,58 +80,46 @@ jobs:
           chmod +x ./gradlew
           chmod +x ./buildscripts/*.sh
 
-          required_files=(
-            "./gradlew"
-            "./buildscripts/build_ios.sh"
-            "./buildscripts/stage_app_libs.sh"
-            "./buildscripts/patch_shaders.sh"
-            "./buildscripts/package_ipa.sh"
-          )
-
-          for file in "${required_files[@]}"; do
+          for file in \
+            ./gradlew \
+            ./buildscripts/build_ios.sh \
+            ./buildscripts/stage_app_libs.sh \
+            ./buildscripts/patch_shaders.sh \
+            ./buildscripts/package_ipa.sh
+          do
             if [[ ! -f "${file}" ]]; then
-              echo "ERROR: required file not found: ${file}"
+              echo "ERROR: file not found:"
+              echo "${file}"
               exit 1
             fi
-
-            echo "Found: ${file}"
           done
 
-          if [[ ! -d "./iosApp" ]]; then
-            echo "ERROR: iosApp directory not found"
-            exit 1
-          fi
+          bash -n ./buildscripts/build_ios.sh
+          bash -n ./buildscripts/stage_app_libs.sh
+          bash -n ./buildscripts/patch_shaders.sh
+          bash -n ./buildscripts/package_ipa.sh
 
-          XCODE_PROJECT="$(
-            find ./iosApp \
-              -type d \
-              -name "*.xcodeproj" \
-              -print -quit
-          )"
+      - name: Restore build cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+            ~/.konan
+            ~/Library/Caches
+            ios_build/src
+            ios_build/ios-cmake
+            ios_build/ios-libs
+          key: openmw-ios-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('buildscripts/build_ios.sh', 'buildscripts/package_ipa.sh', 'gradle/wrapper/gradle-wrapper.properties') }}
+          restore-keys: |
+            openmw-ios-${{ runner.os }}-${{ runner.arch }}-
+            openmw-ios-
 
-          if [[ -z "${XCODE_PROJECT}" ]]; then
-            echo "ERROR: Xcode project not found under iosApp/"
-            find ./iosApp -maxdepth 6 -print || true
-            exit 1
-          fi
-
-          echo "XCODE_PROJECT=${GITHUB_WORKSPACE}/${XCODE_PROJECT#./}" \
-            >> "${GITHUB_ENV}"
-
-          echo "Using Xcode project:"
-          echo "${XCODE_PROJECT}"
-
-      # ---------------------------------------------------------
-      # Gradle / Kotlin iOS
-      # ---------------------------------------------------------
-
-      - name: Build Kotlin iOS Arm64 binaries
+      - name: Build Kotlin iOS Arm64
         shell: bash
         run: |
           set -Eeuo pipefail
 
-          # composeApp configures AGP even for an iOS task.
-          # These conflicting Android preference variables must not exist.
           unset ANDROID_PREFS_ROOT || true
           unset ANDROID_USER_HOME || true
           unset ANDROID_SDK_HOME || true
@@ -169,10 +131,6 @@ jobs:
             --no-configuration-cache \
             --stacktrace
 
-      # ---------------------------------------------------------
-      # OpenMW native dependencies
-      # ---------------------------------------------------------
-
       - name: Build OpenMW native libraries
         shell: bash
         env:
@@ -182,43 +140,35 @@ jobs:
         run: |
           set -Eeuo pipefail
 
+          unset SDKROOT || true
+          unset CFLAGS || true
+          unset CPPFLAGS || true
+          unset CXXFLAGS || true
+          unset LDFLAGS || true
+          unset MACOSX_DEPLOYMENT_TARGET || true
+
           bash ./buildscripts/build_ios.sh
 
-      - name: Inspect native output
+      - name: Create win1251 configuration
         shell: bash
         run: |
           set -Eeuo pipefail
 
-          if [[ ! -d "${GITHUB_WORKSPACE}/ios_build" ]]; then
-            echo "ERROR: ios_build directory was not created"
-            exit 1
-          fi
+          mkdir -p "${GITHUB_WORKSPACE}/iosApp/iosApp"
 
-          echo "Frameworks:"
-          find "${GITHUB_WORKSPACE}/ios_build" \
-            -type d \
-            -name "*.framework" \
-            -print | sort || true
+          cat > "${GITHUB_WORKSPACE}/iosApp/iosApp/openmw.cfg" <<'EOF'
+          fallback-archive=Morrowind.bsa
+          fallback-archive=Tribunal.bsa
+          fallback-archive=Bloodmoon.bsa
+          encoding=win1251
+          fallback=Movies_Company_Logo,skipped_on_ios.bik
+          fallback=Movies_Morrowind_Logo,skipped_on_ios.bik
+          EOF
 
-          echo
-          echo "Static libraries:"
-          find "${GITHUB_WORKSPACE}/ios_build" \
-            -type f \
-            -name "*.a" \
-            -print | sort | head -300 || true
+          echo "Created source configuration:"
+          cat "${GITHUB_WORKSPACE}/iosApp/iosApp/openmw.cfg"
 
-          echo
-          echo "Dynamic libraries:"
-          find "${GITHUB_WORKSPACE}/ios_build" \
-            -type f \
-            -name "*.dylib" \
-            -print | sort | head -300 || true
-
-      # ---------------------------------------------------------
-      # Device IPA
-      # ---------------------------------------------------------
-
-      - name: Build and package device IPA
+      - name: Stage device libraries and resources
         shell: bash
         env:
           IOS_PLATFORM: OS64
@@ -227,54 +177,193 @@ jobs:
         run: |
           set -Eeuo pipefail
 
-          bash ./buildscripts/package_ipa.sh device
+          bash ./buildscripts/stage_app_libs.sh device
 
-      - name: Verify device IPA
+      - name: Force win1251 into staged resources
         shell: bash
         run: |
           set -Eeuo pipefail
 
-          IPA="${GITHUB_WORKSPACE}/OpenMW.ipa"
+          SOURCE_CONFIG="${GITHUB_WORKSPACE}/iosApp/iosApp/openmw.cfg"
+          STAGED_CONFIG="${GITHUB_WORKSPACE}/iosApp/OpenMWAssets/openmw.cfg"
 
-          if [[ ! -f "${IPA}" ]]; then
-            echo "ERROR: IPA was not created:"
-            echo "${IPA}"
+          if [[ ! -f "${SOURCE_CONFIG}" ]]; then
+            echo "ERROR: source openmw.cfg not found"
             exit 1
           fi
 
-          echo "IPA created:"
-          ls -lh "${IPA}"
+          mkdir -p "$(dirname "${STAGED_CONFIG}")"
+          cp -f "${SOURCE_CONFIG}" "${STAGED_CONFIG}"
+
+          echo "Final staged configuration:"
+          cat "${STAGED_CONFIG}"
+
+          grep -Fqx "encoding=win1251" "${STAGED_CONFIG}"
+
+      - name: Patch shaders
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+
+          SHADERS_DIR="$(
+            find "${GITHUB_WORKSPACE}/iosApp/OpenMWAssets" \
+              -type d \
+              -path "*/resources/shaders" \
+              -print -quit || true
+          )"
+
+          if [[ -z "${SHADERS_DIR}" ]]; then
+            echo "ERROR: shaders were not found after staging"
+            find "${GITHUB_WORKSPACE}/iosApp/OpenMWAssets" \
+              -maxdepth 8 \
+              -print | sort || true
+            exit 1
+          fi
+
+          bash ./buildscripts/patch_shaders.sh "${SHADERS_DIR}"
+
+      - name: Build app and create IPA
+        shell: bash
+        env:
+          IOS_PLATFORM: OS64
+          DEPLOYMENT_TARGET: "26.2"
+          IPHONEOS_DEPLOYMENT_TARGET: "26.2"
+        run: |
+          set -Eeuo pipefail
+
+          # package_ipa.sh снова выполнит staging/patching,
+          # если это предусмотрено его стандартной реализацией.
+          # Поэтому конфигурацию после него проверим заново внутри IPA.
+          bash ./buildscripts/package_ipa.sh device
+
+      - name: Find and normalize IPA
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+
+          SEARCH_ROOT="${GITHUB_WORKSPACE}"
+          FINAL_IPA="${GITHUB_WORKSPACE}/OpenMW_iOS_unsigned.ipa"
+
+          mapfile -t IPA_FILES < <(
+            find "${SEARCH_ROOT}" \
+              -type f \
+              -name "*.ipa" \
+              ! -path "${FINAL_IPA}" \
+              -print
+          )
+
+          if [[ "${#IPA_FILES[@]}" -eq 0 ]]; then
+            echo "ERROR: no IPA file was created"
+
+            echo
+            echo "Files near workspace:"
+            find "${SEARCH_ROOT}" \
+              -maxdepth 4 \
+              -type f \
+              -print | sort | head -500
+
+            exit 1
+          fi
+
+          if [[ "${#IPA_FILES[@]}" -gt 1 ]]; then
+            echo "WARNING: multiple IPA files found:"
+            printf '%s\n' "${IPA_FILES[@]}"
+            echo "Using the newest file."
+
+            SOURCE_IPA="$(
+              printf '%s\n' "${IPA_FILES[@]}" |
+              xargs -I{} stat -f '%m %N' "{}" |
+              sort -n |
+              tail -1 |
+              cut -d' ' -f2-
+            )"
+          else
+            SOURCE_IPA="${IPA_FILES[0]}"
+          fi
+
+          echo "Selected IPA:"
+          echo "${SOURCE_IPA}"
+
+          rm -f "${FINAL_IPA}"
+          cp -f "${SOURCE_IPA}" "${FINAL_IPA}"
+
+          echo "Normalized IPA:"
+          ls -lh "${FINAL_IPA}"
+
+      - name: Verify IPA and win1251
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+
+          IPA="${GITHUB_WORKSPACE}/OpenMW_iOS_unsigned.ipa"
+          CHECK_DIR="${RUNNER_TEMP}/openmw-ipa-check"
+
+          test -f "${IPA}"
+
+          rm -rf "${CHECK_DIR}"
+          mkdir -p "${CHECK_DIR}"
+
+          unzip -q "${IPA}" -d "${CHECK_DIR}"
+
+          APP_PATH="$(
+            find "${CHECK_DIR}/Payload" \
+              -maxdepth 1 \
+              -type d \
+              -name "*.app" \
+              -print -quit
+          )"
+
+          if [[ -z "${APP_PATH}" ]]; then
+            echo "ERROR: Payload/*.app not found in IPA"
+            unzip -l "${IPA}"
+            exit 1
+          fi
+
+          CFG_PATH="$(
+            find "${APP_PATH}" \
+              -type f \
+              -name "openmw.cfg" \
+              -print -quit
+          )"
+
+          if [[ -z "${CFG_PATH}" ]]; then
+            echo "ERROR: openmw.cfg was not found inside the packaged app"
+            find "${APP_PATH}" -maxdepth 8 -print | sort || true
+            exit 1
+          fi
+
+          echo "Packaged config:"
+          echo "${CFG_PATH}"
+          cat "${CFG_PATH}"
+
+          if ! grep -Fqx "encoding=win1251" "${CFG_PATH}"; then
+            echo "ERROR: encoding=win1251 was not found in packaged config"
+            exit 1
+          fi
+
+          echo "Verified: encoding=win1251"
 
           echo
           echo "IPA contents:"
           unzip -l "${IPA}"
 
-          if ! unzip -l "${IPA}" | grep -q "Payload/.*\.app/"; then
-            echo "ERROR: IPA does not contain Payload/*.app"
-            exit 1
-          fi
-
       - name: Upload unsigned IPA
         uses: actions/upload-artifact@v4
         with:
           name: OpenMW_iOS_unsigned
-          path: OpenMW.ipa
+          path: OpenMW_iOS_unsigned.ipa
           if-no-files-found: error
-          retention-days: 7
-
-      # ---------------------------------------------------------
-      # Logs and diagnostics
-      # ---------------------------------------------------------
+          retention-days: 90
 
       - name: Upload build logs
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: OpenMW_iOS_logs
+          name: OpenMW_iOS_build_logs
           path: |
             ios_build/**/*.log
             ios_build/**/*.txt
             ios_build/**/CMakeCache.txt
             ios_build/**/config.log
           if-no-files-found: ignore
-          retention-days: 7
+          retention-days: 90
