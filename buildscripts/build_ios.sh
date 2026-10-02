@@ -272,47 +272,124 @@ build_platform_lib() {
     cd ..
 }
 
-# ------------------- ICU (universal static, device + simulator) -------------------
-if skip_if_installed "icu"; then true; else
+# ------------------- ICU (host + device + simulator) -------------------
+
+if skip_if_installed "icu"; then
+    true
+else
     cd "${SRC_DIR}"
-    if [ ! -d "icu-release-${LIBICU_VERSION}" ]; then
-        wget -c https://github.com/unicode-org/icu/archive/refs/tags/release-${LIBICU_VERSION}.tar.gz -O - | tar -xz
+
+    ICU_SOURCE_DIR="${SRC_DIR}/icu-release-${LIBICU_VERSION}"
+    ICU_HOST_BUILD_DIR="${SRC_DIR}/icu_host_build"
+    ICU_HOST_PREFIX="${ICU_HOST_BUILD_DIR}/install"
+
+    if [[ ! -d "${ICU_SOURCE_DIR}" ]]; then
+        echo "=== Downloading ICU ${LIBICU_VERSION} ==="
+
+        wget -c \
+            "https://github.com/unicode-org/icu/archive/refs/tags/release-${LIBICU_VERSION}.tar.gz" \
+            -O - | tar -xz
     fi
-    
-    if [ ! -d "${SRC_DIR}/icu_host_build" ]; then
-        echo "=== Building ICU for host ==="
-        mkdir -p icu_host_build && cd icu_host_build
-        "${SRC_DIR}/icu-release-${LIBICU_VERSION}/icu4c/source/configure" \
-            --prefix="$(pwd)/install" \
-            --disable-tests \
-            --disable-samples \
-            --disable-icuio \
-            --disable-extras
-        make -j"${BUILD_JOBS}"
-        cd ..
+
+    if [[ ! -f "${ICU_HOST_PREFIX}/lib/libicuuc.a" ]] &&
+       [[ ! -f "${ICU_HOST_PREFIX}/lib/libicuuc.dylib" ]]; then
+
+        echo "=== Building ICU for macOS host ==="
+
+        rm -rf "${ICU_HOST_BUILD_DIR}"
+        mkdir -p "${ICU_HOST_BUILD_DIR}"
+
+        HOST_ARCH="$(uname -m)"
+        HOST_SDK_PATH="$(xcrun --sdk macosx --show-sdk-path)"
+
+        case "${HOST_ARCH}" in
+            arm64)
+                HOST_TRIPLET="aarch64-apple-darwin"
+                ;;
+            x86_64)
+                HOST_TRIPLET="x86_64-apple-darwin"
+                ;;
+            *)
+                echo "ERROR: unsupported host architecture: ${HOST_ARCH}" >&2
+                exit 1
+                ;;
+        esac
+
+        (
+            cd "${ICU_HOST_BUILD_DIR}"
+
+            unset SDKROOT
+            unset CFLAGS
+            unset CPPFLAGS
+            unset CXXFLAGS
+            unset LDFLAGS
+            unset CC
+            unset CXX
+            unset AR
+            unset RANLIB
+            unset STRIP
+            unset MACOSX_DEPLOYMENT_TARGET
+
+            export SDKROOT="${HOST_SDK_PATH}"
+            export MACOSX_DEPLOYMENT_TARGET="15.0"
+
+            export CC="$(xcrun --sdk macosx --find clang)"
+            export CXX="$(xcrun --sdk macosx --find clang++)"
+            export AR="$(xcrun --sdk macosx --find ar)"
+            export RANLIB="$(xcrun --sdk macosx --find ranlib)"
+            export STRIP="$(xcrun --sdk macosx --find strip)"
+
+            export CFLAGS="-arch ${HOST_ARCH} -isysroot ${HOST_SDK_PATH}"
+            export CPPFLAGS="-arch ${HOST_ARCH} -isysroot ${HOST_SDK_PATH}"
+            export CXXFLAGS="-arch ${HOST_ARCH} -isysroot ${HOST_SDK_PATH}"
+            export LDFLAGS="-arch ${HOST_ARCH} -isysroot ${HOST_SDK_PATH}"
+
+            cat > host_test.c <<'EOF'
+#include <stdio.h>
+
+int main(void)
+{
+    puts("ICU host compiler test passed");
+    return 0;
+}
+EOF
+
+            "${CC}" \
+                ${CFLAGS} \
+                host_test.c \
+                ${LDFLAGS} \
+                -o host_test
+
+            ./host_test
+
+            rm -f host_test.c host_test
+
+            "${ICU_SOURCE_DIR}/icu4c/source/configure" \
+                --build="${HOST_TRIPLET}" \
+                --host="${HOST_TRIPLET}" \
+                --prefix="${ICU_HOST_PREFIX}" \
+                --disable-tests \
+                --disable-samples \
+                --disable-icuio \
+                --disable-extras \
+                --disable-tools
+
+            make -j"${BUILD_JOBS}"
+            make install
+        )
+    else
+        echo "=== ICU host already installed; skipping host build ==="
     fi
-    
-    build_configure_dual_platform "icu" "${SRC_DIR}/icu-release-${LIBICU_VERSION}/icu4c/source" \
+
+    build_configure_dual_platform \
+        "icu" \
+        "${ICU_SOURCE_DIR}/icu4c/source" \
         --disable-tests \
         --disable-samples \
         --disable-icuio \
         --disable-extras \
         --disable-tools \
-        --with-cross-build="${SRC_DIR}/icu_host_build"
-fi
-
-# ------------------- Bzip2 -------------------
-if skip_if_installed "bzip2"; then true; else
-    cd "${SRC_DIR}"
-    if [ ! -d "bzip2" ]; then
-        echo "=== Downloading and building bzip2 ==="
-        git clone https://github.com/libarchive/bzip2.git
-    fi
-    
-    build_dual_platform "bzip2" "${SRC_DIR}/bzip2" \
-        -DBUILD_SHARED_LIBS=OFF \
-        -DBUILD_STATIC_LIBS=ON \
-        -DENABLE_APP=OFF
+        --with-cross-build="${ICU_HOST_BUILD_DIR}"
 fi
 
 # ------------------- Luajit -------------------
