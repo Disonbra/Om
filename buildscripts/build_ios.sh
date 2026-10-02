@@ -1,4 +1,4 @@
-#!/usr/bin/env bash
+!/usr/bin/env bash
 # build_ios_libs.sh
 # Full block skipping: if already installed, skip download + build entirely
 
